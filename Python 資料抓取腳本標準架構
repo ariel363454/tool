@@ -1,0 +1,91 @@
+import requests
+import pymysql
+import logging
+
+# ==========================================
+# 1. 配置區域 (Configuration)
+# 將變動因素抽離，方便管理
+# ==========================================
+API_URL = "你的 Open Data 網址"
+API_KEY = "你的 API KEY"  # 如果有的話
+
+DB_CONFIG = {
+    "host": "127.0.0.1",
+    "user": "root",
+    "password": "", 
+    "database": "你的資料庫名稱",
+    "charset": "utf8mb4"
+}
+
+# ==========================================
+# 2. 邏輯函數區域 (Functions)
+# ==========================================
+
+def fetch_opendata():
+    """負責從網路抓取原始資料"""
+    print("Step 1: 正在從 API 獲取資料...")
+    # 如果 API 需要 Key，通常放在 params 或 headers
+    params = {"Authorization": API_KEY} 
+    response = requests.get(API_URL, params=params)
+    
+    if response.status_code == 200:
+        return response.json()
+    else:
+        print(f"抓取失敗，錯誤代碼：{response.status_code}")
+        return None
+
+def transform_data(raw_json):
+    """負責處理 JSON，過濾出你要的欄位"""
+    print("Step 2: 資料清洗與轉換...")
+    processed_list = []
+    
+    # 這裡根據 API 的結構找出資料清單 (例如 records)
+    records = raw_json.get('result', {}).get('records', [])
+    
+    for item in records:
+        # 整理成符合你資料庫欄位的格式 (Tuple)
+        row = (
+            item.get('SiteName'),
+            item.get('AQI'),
+            item.get('Status')
+        )
+        processed_list.append(row)
+    
+    return processed_list
+
+def save_to_mysql(data_list):
+    """負責與 MySQL 溝通並存入資料"""
+    if not data_list:
+        print("沒有資料可以存入")
+        return
+
+    print(f"Step 3: 準備寫入資料庫 (共 {len(data_list)} 筆)...")
+    conn = pymysql.connect(**DB_CONFIG)
+    try:
+        with conn.cursor() as cursor:
+            # 建議先清空舊資料 (視你的需求而定)
+            # cursor.execute("TRUNCATE TABLE my_table")
+            
+            sql = "INSERT INTO my_table (site_name, aqi_value, status_text) VALUES (%s, %s, %s)"
+            
+            # 使用 executemany 大量寫入，效能比一筆一筆寫快很多
+            cursor.executemany(sql, data_list)
+            
+        conn.commit()
+        print("資料存入成功！")
+    except Exception as e:
+        conn.rollback()
+        print(f"資料庫操作失敗: {e}")
+    finally:
+        conn.close()
+
+# ==========================================
+# 3. 執行入口 (Main Entry)
+# ==========================================
+if __name__ == "__main__":
+    # 按照流程呼叫函數 (ETL 流程)
+    raw_data = fetch_opendata()
+    
+    if raw_data:
+        clean_data = transform_data(raw_data)
+        save_to_mysql(clean_data)
