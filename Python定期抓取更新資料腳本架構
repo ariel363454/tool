@@ -1,0 +1,118 @@
+import requests
+import pymysql
+import time
+from datetime import datetime
+
+# ==========================================
+# 1. 配置區域 (這裡填入所有會變動的設定)
+# ==========================================
+# 【填空】：放你要抓取的政府或第三方 API 網址
+API_URL = "https://example.com/api/data.json" 
+
+# 【填空】：設定你的資料庫連線資訊
+DB_CONFIG = {
+    "host": "127.0.0.1",
+    "user": "root",
+    "password": "", 
+    "database": "你的資料庫名稱",  # 👈 填空
+    "charset": "utf8mb4"
+}
+
+# 【填空】：設定你希望隔多久更新一次（單位：秒）
+# 例如：5分鐘=300秒, 10分鐘=600秒, 1小時=3600秒
+UPDATE_INTERVAL = 300 
+
+# ==========================================
+# 2. ETL 邏輯函數區域 (Functions)
+# ==========================================
+
+def fetch_data():
+    """【E】Extract：負責把最新的網路資料抓下來"""
+    try:
+        # 設定 timeout=10 防止因為政府伺服器塞車導致你的程式永遠卡死
+        response = requests.get(API_URL, timeout=10) 
+        if response.status_code == 200:
+            return response.json()
+        print(f"[{datetime.now()}] 抓取失敗，API 回傳狀態碼：{response.status_code}")
+    except Exception as e:
+        print(f"[{datetime.now()}] 連線 API 發生異常: {e}")
+    return None
+
+
+def transform_data(raw_json):
+    """【T】Transform：負責清洗、過濾、重新排列資料"""
+    processed_list = []
+    
+    # 【填空】：根據 API 的 JSON 結構，一路 get 進去找到資料陣列（通常是 List）
+    items = raw_json.get('data', {}).get('列表名稱', []) 
+    
+    for item in items:
+        # --- 這裡進行資料清洗與欄位提取 ---
+        # 範例：val1 = item.get('欄位A')
+        # 範例：val2 = int(item.get('欄位B', 0)) # 順便轉型別
+        
+        # 【填空】：將清洗好的欄位，依照「SQL 語句需要的順序」包成一個元組 (Tuple)
+        row = (
+            item.get('欄位1'), # 對應 SQL 的第一個 %s
+            item.get('欄位2'), # 對應 SQL 的第二個 %s
+        )
+        processed_list.append(row)
+        
+    return processed_list
+
+
+def update_database(data_list):
+    """【L】Load：負責把洗好的資料寫入/更新進 MySQL"""
+    if not data_list:
+        print(f"[{datetime.now()}] 沒有資料需要更新")
+        return
+        
+    conn = pymysql.connect(**DB_CONFIG)
+    try:
+        with conn.cursor() as cursor:
+            # 【填空】：根據你的需求，編寫 SQL 語句
+            # 💡 提示：
+            # 如果是定時刷新剩餘車位，用 UPDATE ... WHERE ...
+            # 如果是每日抓取新資料，用 INSERT INTO ... ON DUPLICATE KEY UPDATE ...
+            sql = """
+            UPDATE 你的資料表名稱 
+            SET 欄位名稱 = %s 
+            WHERE 條件欄位 = %s
+            """
+            
+            # 使用 executemany 大量批次寫入，效能極高
+            cursor.executemany(sql, data_list)
+            
+        conn.commit()
+        print(f"[{datetime.now()}] 成功更新 {len(data_list)} 筆資料到資料庫！")
+    except Exception as e:
+        conn.rollback()
+        print(f"[{datetime.now()}] 資料庫操作失敗: {e}")
+    finally:
+        conn.close()
+
+# ==========================================
+# 3. 執行入口 (無窮迴圈常駐排程)
+# ==========================================
+if __name__ == "__main__":
+    print("🚀 常駐定時排程程式已成功啟動...")
+    
+    # 利用 while True 建立無窮迴圈，程式只要不手動關閉就會一直執行
+    while True:
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print(f"\n--- 開始執行新一輪更新排程 [{current_time}] ---")
+        
+        # 1. 抓取資料 (Extract)
+        raw_data = fetch_data()
+        
+        if raw_data:
+            # 2. 資料清洗與轉換 (Transform)
+            clean_data = transform_data(raw_data)
+            
+            # 3. 寫入資料庫 (Load)
+            update_database(clean_data)
+            
+        print(f"⏳ 本輪執行完畢。程式將暫停 {UPDATE_INTERVAL} 秒，時間到後自動執行下一輪...")
+        
+        # 讓 CPU 休息，時間到才會跑下一次迴圈
+        time.sleep(UPDATE_INTERVAL)
