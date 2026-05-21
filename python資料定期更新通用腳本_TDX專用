@@ -1,0 +1,104 @@
+import requests
+import json
+from datetime import datetime
+
+# ==========================================
+# 1. 配置區域 (Configuration)
+# ==========================================
+# 💡 請填入你在 TDX 後台申請的 API 金鑰
+CLIENT_ID = "你的_CLIENT_ID"
+CLIENT_SECRET = "你的_CLIENT_SECRET"
+
+# TDX 官方標準的 Token 驗證網址
+TOKEN_URL = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token"
+
+# 🎯 這裡以「台北市停車場基本資料 (靜態)」為例，未來可以自由替換成其他 TDX API 網址
+DATA_URL = "https://tdx.transportdata.tw/api/basic/v2/Parking/OffStreet/CarPark/City/Taipei?%24format=JSON"
+
+# ==========================================
+# 2. TDX 核心驗證函數 (OAuth 2.0)
+# ==========================================
+def get_tdx_access_token(client_id, client_secret):
+    """
+    用 Client ID 和 Secret 向 TDX 認證伺服器換取臨時通行證 (Access Token)
+    """
+    print(f"[{datetime.now()}] 正在向 TDX 申請 Access Token...")
+    
+    # TDX 規定的標準 OAuth2 參數格式
+    payload = {
+        'grant_type': 'client_credentials',
+        'client_id': client_id,
+        'client_secret': client_secret
+    }
+    headers = {
+        'content-type': 'application/x-www-form-urlencoded'
+    }
+    
+    try:
+        response = requests.post(TOKEN_URL, data=payload, headers=headers, timeout=10)
+        if response.status_code == 200:
+            token_data = response.json()
+            access_token = token_data.get('access_token')
+            print(f"[{datetime.now()}] 🎉 Token 取得成功！")
+            return access_token
+        else:
+            print(f"❌ Token 取得失敗，狀態碼：{response.status_code}，回應：{response.text}")
+            return None
+    except Exception as e:
+        print(f"❌ 連線認證伺服器發生異常: {e}")
+        return None
+
+# ==========================================
+# 3. 帶有 Token 的資料抓取函數
+# ==========================================
+def fetch_tdx_data(api_url, access_token):
+    """
+    帶著有效的 Access Token 去抓取指定的交通數據
+    """
+    if not access_token:
+        print("沒有有效的 Token，無法抓取資料。")
+        return None
+        
+    print(f"[{datetime.now()}] 正在自 TDX 擷取數據資料...")
+    
+    # 💡 關鍵：必須在 Headers 裡面加上 Bearer 認證
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Accept-Encoding': 'gzip'  # 🚀 告訴伺服器你支援 Gzip 壓縮，幫你省流量！
+    }
+    
+    try:
+        response = requests.get(api_url, headers=headers, timeout=15)
+        if response.status_code == 200:
+            return response.json()
+        elif response.status_code == 401:
+            print("❌ 資料抓取失敗：Token 可能已過期或無效 (401)")
+            return None
+        else:
+            print(f"❌ 資料抓取失敗，狀態碼：{response.status_code}")
+            return None
+    except Exception as e:
+        print(f"❌ 連線 TDX API 發生異常: {e}")
+        return None
+
+# ==========================================
+# 4. 主程式執行入口
+# ==========================================
+if __name__ == "__main__":
+    # 第一步：去換通行證 (每天開發或重啟排程時換一次即可)
+    token = get_tdx_access_token(CLIENT_ID, CLIENT_SECRET)
+    
+    if token:
+        # 第二步：帶著通行證去抓你想存取的資料
+        raw_json = fetch_tdx_data(DATA_URL, token)
+        
+        if raw_json:
+            print(f"\n✅ 成功拿到 TDX 資料！共抓到 {len(raw_json)} 筆停車場數據。")
+            
+            # 💡 測試列印第一筆資料，方便你觀察 TDX 的欄位命名結構（例如：CarParkID, CarParkName...）
+            print("\n--- 第一筆資料結構範例 ---")
+            if isinstance(raw_json, list) and len(raw_json) > 0:
+                print(json.dumps(raw_json[0], indent=2, ensure_ascii=False))
+            elif isinstance(raw_json, dict):
+                # 有些 API 回傳的是 Dict，先印出前幾個鍵
+                print(list(raw_json.keys())[:5])
